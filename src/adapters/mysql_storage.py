@@ -60,7 +60,8 @@ class MySQLStorage(StorageInterface):
         session: Session = self.SessionLocal()
         try:
             item_id = item_data.get('id', uuid.uuid4().hex)
-            valid_data = {k: v for k, v in item_data.items() if k != 'id' and hasattr(ItemDB, k)}
+            # Filter item_data for valid ItemDB columns
+            valid_data = {k: v for k, v in item_data.items() if hasattr(ItemDB, k) and k != 'id'}
             db_item = ItemDB(id=item_id, **valid_data)
 
             session.add(db_item)
@@ -116,7 +117,7 @@ class MySQLStorage(StorageInterface):
             item = session.query(ItemDB).filter(ItemDB.id == item_id).first()
             return item.to_dict() if item else None
         except SQLAlchemyError as e:
-            session.rollback()
+            # session.rollback() # Not strictly necessary for read
             raise RuntimeError(f"Error reading item '{item_id}' from MySQL: {e}")
         finally:
             session.close()
@@ -153,5 +154,51 @@ class MySQLStorage(StorageInterface):
         except SQLAlchemyError as e:
             session.rollback()
             raise RuntimeError(f"Error deleting item '{item_id}' from MySQL: {e}")
+        finally:
+            session.close()
+
+    async def create_many(self, items_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Creates multiple items in batch in the MySQL database."""
+        session: Session = self.SessionLocal()
+        created_items_with_ids = []
+        mappings_to_insert = []
+
+        for item_data_single in items_data:
+            item_id = item_data_single.get('id', uuid.uuid4().hex)
+
+            # Prepare a dictionary that only includes keys corresponding to ItemDB columns
+            valid_data_for_model = {k: v for k, v in item_data_single.items() if hasattr(ItemDB, k) and k != 'id'}
+            mapping = {'id': item_id, **valid_data_for_model}
+
+            mappings_to_insert.append(mapping)
+
+            # Store a representation for return.
+            return_item_data = item_data_single.copy()
+            return_item_data['id'] = item_id
+            created_items_with_ids.append(return_item_data)
+
+        if not mappings_to_insert:
+            return []
+
+        try:
+            # Use bulk_insert_mappings for potentially better performance with dicts.
+            # ItemDB instances could also be created and session.add_all used.
+            session.bulk_insert_mappings(ItemDB, mappings_to_insert)
+            session.commit()
+            return created_items_with_ids
+        except SQLAlchemyError as e:
+            session.rollback()
+            raise RuntimeError(f"Error bulk creating items in MySQL: {e}")
+        finally:
+            session.close()
+
+    async def export_all(self) -> List[Dict[str, Any]]:
+        """Exports all items from the MySQL database."""
+        session: Session = self.SessionLocal()
+        try:
+            all_db_items = session.query(ItemDB).all()
+            return [item.to_dict() for item in all_db_items]
+        except SQLAlchemyError as e:
+            raise RuntimeError(f"Error exporting all items from MySQL: {e}")
         finally:
             session.close()

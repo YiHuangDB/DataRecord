@@ -3,10 +3,23 @@ from fastapi import FastAPI, HTTPException, Response, Query # Query added
 from src.core.models import Item, PaginatedResponseModel # PaginatedResponseModel added
 from src.core.storage_interface import StorageInterface, PaginatedDbResponse # PaginatedDbResponse for type hint
 
+# Define tags for OpenAPI documentation
+tags_metadata = [
+    {
+        "name": "Items",
+        "description": "CRUD operations for individual items, including paginated listing.",
+    },
+    {
+        "name": "Items Batch Operations",
+        "description": "Batch create and export operations for items.",
+    },
+]
+
 app = FastAPI(
     title="Flexible CRUD API",
     description="A demonstration API for CRUD operations with configurable storage backends.",
     version="1.0.0",
+    openapi_tags=tags_metadata, # Add tags metadata
 )
 
 storage_adapter: Optional[StorageInterface] = None # Allow it to be None initially
@@ -29,7 +42,7 @@ async def create_item(item: Item) -> Item:
 
 @app.get(
     "/items",
-    response_model=PaginatedResponseModel[Item], # Use the new generic Pydantic model
+    response_model=PaginatedResponseModel[Item],
     summary="Read all items with pagination",
     tags=["Items"],
     description="Retrieves a list of items with pagination. Allows specifying offset and limit for controlling the result set."
@@ -39,30 +52,21 @@ async def read_items(
     limit: int = Query(10, gt=0, le=100, description="Limit for pagination. Maximum number of items to return. Must be positive and at most 100.")
 ):
     if storage_adapter is None:
-        # Use 503 Service Unavailable if the storage isn't ready
         raise HTTPException(status_code=503, detail="Storage adapter not initialized. Please check configuration.")
 
     try:
-        # Call the storage adapter's read_all method which returns PaginatedDbResponse (TypedDict)
         paginated_db_data: PaginatedDbResponse = await storage_adapter.read_all(offset=offset, limit=limit)
-
-        # Convert the list of dictionaries (items) from the DB response
-        # to a list of Item Pydantic models. This also validates each item.
         validated_items = [Item(**item_dict) for item_dict in paginated_db_data["items"]]
 
-        # Construct the final response using the PaginatedResponseModel Pydantic model.
-        # This ensures the overall response structure is also validated and correctly serialized.
         return PaginatedResponseModel[Item](
             items=validated_items,
             total_count=paginated_db_data["total_count"],
             offset=paginated_db_data["offset"],
             limit=paginated_db_data["limit"]
         )
-    except RuntimeError as e: # Catch custom errors from adapters (e.g., "Error reading items from...")
-        # Log e for debugging if necessary (e.g., print(f"Adapter error in read_items: {e}"))
+    except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e: # Catch any other unexpected errors during the process
-        # Log e for debugging (e.g., print(f"Unexpected error in read_items: {e}") or proper logging)
+    except Exception as e:
         raise HTTPException(status_code=500, detail="An unexpected error occurred while retrieving items.")
 
 
@@ -116,3 +120,59 @@ async def delete_item(item_id: str):
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred while deleting item {item_id}: {e}")
+
+# --- New Batch Operations ---
+
+@app.post(
+    "/items/batch",
+    response_model=List[Item],
+    summary="Create multiple items in batch",
+    tags=["Items Batch Operations"],
+    description="Allows creating multiple items in a single request. Each item in the request list is processed. Returns a list of created items."
+)
+async def create_items_batch(items_to_create: List[Item]):
+    if storage_adapter is None:
+        raise HTTPException(status_code=503, detail="Storage adapter not initialized. Please check configuration.")
+
+    if not items_to_create: # Check if the input list is empty
+        raise HTTPException(status_code=400, detail="No items provided for batch creation.")
+
+    try:
+        # Convert Pydantic Item models to dictionaries.
+        # exclude_none=True: if a field in Item model is Optional and not provided, it won't be in the dict.
+        # Adapters should handle potentially missing optional fields (e.g. 'description').
+        # 'id' is Optional in Item model; if present, adapter might use it, otherwise adapter generates one.
+        item_data_list = [item.model_dump(exclude_none=True) for item in items_to_create]
+
+        created_item_dicts = await storage_adapter.create_many(item_data_list)
+
+        # Convert list of dicts from adapter back to Item Pydantic models for response validation
+        response_items = [Item(**item_dict) for item_dict in created_item_dicts]
+
+        return response_items
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during batch creation: {str(e)}")
+
+@app.get(
+    "/items/export",
+    response_model=List[Item],
+    summary="Export all items from storage",
+    tags=["Items Batch Operations"],
+    description="Retrieves all items currently stored in the backend without pagination. Use with caution on very large datasets."
+)
+async def export_all_items():
+    if storage_adapter is None:
+        raise HTTPException(status_code=503, detail="Storage adapter not initialized. Please check configuration.")
+
+    try:
+        exported_item_dicts = await storage_adapter.export_all()
+
+        response_items = [Item(**item_dict) for item_dict in exported_item_dicts]
+
+        return response_items
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during export: {str(e)}")

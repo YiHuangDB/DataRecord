@@ -152,6 +152,52 @@ class TestMySQLStorage(unittest.IsolatedAsyncioTestCase):
         deleted = await self.storage.delete("nonexistent-mysql-id")
         self.assertFalse(deleted)
 
+    async def test_create_many_items(self):
+        items_to_create_data = [
+            {"name": "Batch MySQL 1", "description": "First batch MySQL item", "data": {"b_mysql": 1}},
+            {"name": "Batch MySQL 2", "description": "Second batch MySQL item", "data": {"b_mysql": 2, "extra_field": "yes"}},
+        ]
+        created_items = await self.storage.create_many(items_to_create_data)
+        self.assertEqual(len(created_items), 2)
+        for i, created_item in enumerate(created_items):
+            self.assertIn("id", created_item)
+            self.assertIsNotNone(created_item["id"])
+            self.assertEqual(created_item["name"], items_to_create_data[i]["name"])
+            # Verify item is actually stored
+            fetched_item = await self.storage.read_one(created_item["id"])
+            self.assertIsNotNone(fetched_item)
+            self.assertEqual(fetched_item["name"], items_to_create_data[i]["name"])
+            self.assertEqual(fetched_item["description"], items_to_create_data[i]["description"])
+            self.assertEqual(fetched_item["data"], items_to_create_data[i]["data"]) # SQLAlchemy handles JSON
+
+    async def test_export_all_items(self):
+        # Test with no items
+        exported_empty = await self.storage.export_all()
+        self.assertEqual(len(exported_empty), 0)
+
+        # Create some items
+        item1_data = {"name": "Export MySQL 1", "data": {"e_mysql": 1}}
+        item2_data = {"name": "Export MySQL 2", "description": "MySQL export test", "data": {"e_mysql": 2}}
+        created1 = await self.storage.create(item1_data)
+        created2 = await self.storage.create(item2_data)
+
+        exported_items = await self.storage.export_all()
+        self.assertEqual(len(exported_items), 2)
+
+        exported_ids = {item["id"] for item in exported_items}
+        self.assertIn(created1["id"], exported_ids)
+        self.assertIn(created2["id"], exported_ids)
+
+        found_item1 = next((item for item in exported_items if item["id"] == created1["id"]), None)
+        self.assertIsNotNone(found_item1)
+        self.assertEqual(found_item1["name"], created1["name"])
+        self.assertEqual(found_item1["data"], created1["data"])
+
+        found_item2 = next((item for item in exported_items if item["id"] == created2["id"]), None)
+        self.assertIsNotNone(found_item2)
+        self.assertEqual(found_item2["name"], created2["name"])
+        self.assertEqual(found_item2["description"], created2["description"])
+
 # This allows running the test file directly, though 'python run_tests.py' is preferred.
 if __name__ == '__main__':
     unittest.main()

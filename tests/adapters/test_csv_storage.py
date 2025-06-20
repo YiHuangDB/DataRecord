@@ -119,5 +119,72 @@ class TestCsvStorage(unittest.IsolatedAsyncioTestCase): # Use IsolatedAsyncioTes
         self.assertEqual(retrieved_item["description"], item_data["description"])
         self.assertEqual(retrieved_item["data"], item_data["data"])
 
+    async def test_create_many_items(self):
+        items_to_create_data = [
+            {"name": "Batch CSV 1", "description": "First batch CSV", "data": {"b_csv": 1, "nested": {"n": "one"}}},
+            {"name": "Batch CSV 2", "description": "Second batch CSV", "data": {"b_csv": 2, "other": True}},
+        ]
+        # This storage instance will write to self.test_file
+        created_items = await self.storage.create_many(items_to_create_data)
+        self.assertEqual(len(created_items), 2)
+
+        for i, created_item in enumerate(created_items):
+            self.assertIn("id", created_item)
+            self.assertIsNotNone(created_item["id"])
+            self.assertEqual(created_item["name"], items_to_create_data[i]["name"])
+            # Verify data type for 'data' field if it was dict
+            self.assertEqual(created_item["data"], items_to_create_data[i]["data"])
+
+        # Verify persistence by loading with a new CsvStorage instance
+        new_storage_instance = CsvStorage(filepath=self.test_file, fieldnames=self.fieldnames)
+        # export_all on new instance should load and parse all data correctly
+        all_persisted_items = await new_storage_instance.export_all()
+        self.assertEqual(len(all_persisted_items), 2)
+
+        retrieved_ids = {item["id"] for item in all_persisted_items}
+        for created_item in created_items:
+            self.assertIn(created_item["id"], retrieved_ids)
+            # Further check content from new instance
+            fetched_item = await new_storage_instance.read_one(created_item["id"])
+            self.assertIsNotNone(fetched_item)
+            self.assertEqual(fetched_item["name"], created_item["name"])
+            # CsvStorage's read_one/export_all should deserialize 'data' from JSON string to dict
+            self.assertEqual(fetched_item["data"], created_item["data"])
+
+
+    async def test_export_all_items(self):
+        # Test with no items
+        exported_empty = await self.storage.export_all()
+        self.assertEqual(len(exported_empty), 0)
+
+        # Create some items - CsvStorage stores 'data' as JSON string but export_all should return dict
+        item1_data = {"name": "Export CSV 1", "data": {"e_csv": 1, "is_dict": True}}
+        item2_data = {"name": "Export CSV 2", "description": "With Desc", "data": {"e_csv": 2}}
+
+        created1 = await self.storage.create(item1_data) # create method itself returns 'data' as dict
+        created2 = await self.storage.create(item2_data)
+
+        exported_items = await self.storage.export_all()
+        self.assertEqual(len(exported_items), 2)
+
+        exported_ids = {item["id"] for item in exported_items}
+        self.assertIn(created1["id"], exported_ids)
+        self.assertIn(created2["id"], exported_ids)
+
+        # Verify content and that 'data' field is a dict
+        found_item1 = next((item for item in exported_items if item["id"] == created1["id"]), None)
+        self.assertIsNotNone(found_item1)
+        self.assertEqual(found_item1["name"], created1["name"])
+        self.assertIsInstance(found_item1["data"], dict) # Crucial for CSV test
+        self.assertEqual(found_item1["data"], item1_data["data"])
+
+        found_item2 = next((item for item in exported_items if item["id"] == created2["id"]), None)
+        self.assertIsNotNone(found_item2)
+        self.assertEqual(found_item2["name"], created2["name"])
+        self.assertIsInstance(found_item2["data"], dict)
+        self.assertEqual(found_item2["data"], item2_data["data"])
+        self.assertEqual(found_item2["description"], item2_data["description"])
+
+
 if __name__ == '__main__':
     unittest.main()

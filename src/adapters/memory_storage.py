@@ -75,3 +75,25 @@ class MemoryStorage(StorageInterface):
             del self._data[item_id]
             return True
         return False
+
+    async def create_many(self, items_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Creates multiple items in batch in the in-memory storage.
+        IDs are generated if not provided.
+        """
+        created_items = []
+        for item_data in items_data:
+            item_id = item_data.get('id', uuid.uuid4().hex)
+            new_item = item_data.copy() # Avoid modifying input dict directly
+            new_item['id'] = item_id
+
+            self._data[item_id] = new_item
+            created_items.append(new_item)
+        return created_items
+
+    async def export_all(self) -> List[Dict[str, Any]]:
+        """
+        Exports all items from the in-memory storage.
+        Returns a list of all stored items.
+        """
+        return list(self._data.values())

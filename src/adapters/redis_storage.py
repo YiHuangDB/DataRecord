@@ -10,6 +10,7 @@ import json
 from typing import List, Optional, Dict, Any
 
 import redis
+from redis.exceptions import RedisError # Import RedisError
 from src.core.storage_interface import StorageInterface, PaginatedDbResponse
 
 class RedisStorage(StorageInterface):
@@ -36,7 +37,7 @@ class RedisStorage(StorageInterface):
         try:
             self.redis_client = redis.from_url(redis_url)
             self.redis_client.ping()
-        except redis.exceptions.ConnectionError as e:
+        except redis.exceptions.ConnectionError as e: # More specific than just RedisError for connection
             raise ConnectionError(f"Failed to connect to Redis at {redis_url}: {e}")
 
         self.key_prefix = "item:"
@@ -116,7 +117,7 @@ class RedisStorage(StorageInterface):
                 "offset": offset,
                 "limit": limit,
             }
-        except redis.exceptions.RedisError as e:
+        except RedisError as e:
             print(f"Error reading items from Redis: {e}")
             raise RuntimeError(f"Error reading items from Redis: {e}")
         except Exception as e:
@@ -150,3 +151,62 @@ class RedisStorage(StorageInterface):
         redis_key = self.key_prefix + item_id
         deleted_count = self.redis_client.delete(redis_key)
         return deleted_count > 0
+
+    async def create_many(self, items_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Creates multiple items in batch in Redis using a pipeline."""
+        created_items = []
+        if not items_data:
+            return []
+
+        try:
+            pipe = self.redis_client.pipeline()
+            for item_data in items_data:
+                item_id = item_data.get('id', uuid.uuid4().hex)
+
+                full_item_data = item_data.copy()
+                full_item_data['id'] = item_id
+
+                redis_key = self.key_prefix + item_id
+                serialized_data = self._serialize(full_item_data)
+
+                pipe.set(redis_key, serialized_data)
+                created_items.append(full_item_data)
+
+            pipe.execute()
+            return created_items
+        except RedisError as e:
+            # Log the error, e.g., print(f"RedisError during create_many: {e}")
+            raise RuntimeError(f"Error bulk creating items in Redis: {e}")
+        except Exception as e:
+            # Log the error, e.g., print(f"Unexpected error during create_many: {e}")
+            raise RuntimeError(f"An unexpected error occurred during Redis create_many: {e}")
+
+    async def export_all(self) -> List[Dict[str, Any]]:
+        """
+        Exports all items from Redis.
+        Uses KEYS and MGET. Warning: KEYS can be slow on large databases.
+        """
+        try:
+            item_keys_bytes = self.redis_client.keys(self.key_prefix + "*")
+
+            if not item_keys_bytes:
+                return []
+
+            # item_keys = [key.decode('utf-8') for key in item_keys_bytes] # Not needed if mget takes bytes
+
+            items_data_str = self.redis_client.mget(item_keys_bytes) # mget can take list of bytes
+
+            exported_items: List[Dict[str, Any]] = []
+            for item_str in items_data_str:
+                if item_str is not None:
+                    deserialized_item = self._deserialize(item_str)
+                    if deserialized_item is not None:
+                        exported_items.append(deserialized_item)
+
+            return exported_items
+        except RedisError as e:
+            # Log the error, e.g., print(f"RedisError during export_all: {e}")
+            raise RuntimeError(f"Error exporting all items from Redis: {e}")
+        except Exception as e:
+            # Log the error, e.g., print(f"Unexpected error during export_all: {e}")
+            raise RuntimeError(f"An unexpected error occurred during Redis export_all: {e}")
