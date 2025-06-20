@@ -9,9 +9,8 @@ import uuid
 import json
 from typing import List, Optional, Dict, Any
 
-import redis # type: ignore - For Redis client, ignore type if stubs not present
-
-from src.core.storage_interface import StorageInterface
+import redis
+from src.core.storage_interface import StorageInterface, PaginatedDbResponse
 
 class RedisStorage(StorageInterface):
     """
@@ -36,9 +35,8 @@ class RedisStorage(StorageInterface):
         """
         try:
             self.redis_client = redis.from_url(redis_url)
-            self.redis_client.ping() # Verify connection during initialization
+            self.redis_client.ping()
         except redis.exceptions.ConnectionError as e:
-            # Re-raise as a standard ConnectionError or a custom one if preferred
             raise ConnectionError(f"Failed to connect to Redis at {redis_url}: {e}")
 
         self.key_prefix = "item:"
@@ -59,8 +57,7 @@ class RedisStorage(StorageInterface):
         try:
             return json.loads(data_str.decode('utf-8'))
         except json.JSONDecodeError:
-            # Log error or handle appropriately if data is not valid JSON
-            print(f"Error: Could not deserialize data from Redis: {data_str[:100]}") # Log snippet
+            print(f"Error: Could not deserialize data from Redis: {data_str[:100]}")
             return None
 
     async def create(self, item_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -69,34 +66,62 @@ class RedisStorage(StorageInterface):
         Generates a UUID for 'id' if not provided. Item is stored as a JSON string.
         """
         item_id = item_data.get('id', uuid.uuid4().hex)
-        item_data_with_id = {**item_data, "id": item_id} # Ensure ID is part of the stored data
+        item_data_with_id = {**item_data, "id": item_id}
 
         redis_key = self.key_prefix + item_id
         serialized_data = self._serialize(item_data_with_id)
 
         self.redis_client.set(redis_key, serialized_data)
-        return item_data_with_id # Return the dict with the confirmed ID
+        return item_data_with_id
 
-    async def read_all(self) -> List[Dict[str, Any]]:
+    async def read_all(self, offset: int = 0, limit: int = 100) -> PaginatedDbResponse:
         """
-        Retrieves all items from Redis that match the key prefix.
-        Note: `KEYS` can be slow on large databases; `SCAN` is preferred in production.
+        Retrieves items from Redis with pagination.
+        Note: This implementation uses `KEYS` which can be inefficient for large datasets.
+        Client-side sorting is applied for pagination consistency.
+
+        Args:
+            offset: The number of items to skip.
+            limit: The maximum number of items to return.
+
+        Returns:
+            A dictionary conforming to PaginatedDbResponse, containing the
+            paginated list of items, total count of matching items,
+            the offset used, and the limit used.
+
+        Raises:
+            RuntimeError: If a Redis error occurs or an unexpected error happens.
         """
-        items: List[Dict[str, Any]] = []
-        # Using KEYS for simplicity. For production, consider SCAN.
-        item_keys_bytes = self.redis_client.keys(self.key_prefix + "*")
+        try:
+            item_keys_bytes = self.redis_client.keys(self.key_prefix + "*")
+            item_keys = sorted([key.decode('utf-8') for key in item_keys_bytes])
 
-        if not item_keys_bytes:
-            return items
+            total_count = len(item_keys)
 
-        # MGET can be more efficient if there are many keys
-        serialized_items = self.redis_client.mget(item_keys_bytes)
+            if total_count == 0:
+                return {"items": [], "total_count": 0, "offset": offset, "limit": limit}
 
-        for serialized_data in serialized_items:
-            deserialized_item = self._deserialize(serialized_data) # serialized_data can be None if a key disappeared
-            if deserialized_item:
-                items.append(deserialized_item)
-        return items
+            paginated_keys_to_fetch = item_keys[offset : offset + limit]
+
+            items_list: List[Dict[str, Any]] = []
+            if paginated_keys_to_fetch:
+                items_data_str = self.redis_client.mget(paginated_keys_to_fetch)
+
+                deserialized_items = [self._deserialize(item_str) for item_str in items_data_str if item_str is not None]
+                items_list = [item for item in deserialized_items if item is not None]
+
+            return {
+                "items": items_list,
+                "total_count": total_count,
+                "offset": offset,
+                "limit": limit,
+            }
+        except redis.exceptions.RedisError as e:
+            print(f"Error reading items from Redis: {e}")
+            raise RuntimeError(f"Error reading items from Redis: {e}")
+        except Exception as e:
+            print(f"An unexpected error occurred in RedisStorage.read_all: {e}")
+            raise RuntimeError(f"An unexpected error occurred in RedisStorage.read_all: {e}")
 
     async def read_one(self, item_id: str) -> Optional[Dict[str, Any]]:
         """Retrieves a single item by ID from Redis after deserializing its JSON string."""
@@ -114,7 +139,6 @@ class RedisStorage(StorageInterface):
         if not self.redis_client.exists(redis_key):
             return None
 
-        # Ensure the ID from path is used, and it's part of the stored object
         item_data_with_id = {**item_data, "id": item_id}
 
         serialized_data = self._serialize(item_data_with_id)

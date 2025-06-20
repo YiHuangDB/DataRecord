@@ -6,7 +6,14 @@ set of asynchronous CRUD (Create, Read, Update, Delete) operations for items.
 Items are represented as dictionaries.
 """
 from abc import ABC, abstractmethod
-from typing import Optional, List, Dict, Any # Using Any for dict values for flexibility
+from typing import TypedDict, List, Dict, Any, Optional
+
+# Definition for the paginated response structure
+class PaginatedDbResponse(TypedDict):
+    items: List[Dict[str, Any]]
+    total_count: int
+    offset: int
+    limit: int
 
 class StorageInterface(ABC):
     """
@@ -31,13 +38,20 @@ class StorageInterface(ABC):
         pass
 
     @abstractmethod
-    async def read_all(self) -> List[Dict[str, Any]]:
+    async def read_all(self, offset: int = 0, limit: int = 100) -> PaginatedDbResponse:
         """
-        Retrieves all items from the storage.
+        Retrieves items from the storage with pagination.
+
+        Args:
+            offset: The number of items to skip before starting to collect the result set.
+            limit: The maximum number of items to return.
 
         Returns:
-            A list of dictionaries, where each dictionary represents an item.
-            Returns an empty list if no items are found.
+            A dictionary conforming to PaginatedDbResponse, containing the list of
+            items for the current page, total count of items in storage,
+            the offset used, and the limit used.
+            Returns an empty list of items if no items are found for the given page,
+            but total_count should still reflect the overall count in storage.
         """
         pass
 

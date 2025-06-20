@@ -11,7 +11,7 @@ import uuid
 import shutil
 from typing import List, Optional, Dict, Any
 
-from src.core.storage_interface import StorageInterface
+from src.core.storage_interface import StorageInterface, PaginatedDbResponse
 
 class CsvStorage(StorageInterface):
     """
@@ -33,13 +33,10 @@ class CsvStorage(StorageInterface):
         """
         self.filepath = filepath
         if not fieldnames or 'id' not in fieldnames:
-            # Ensure 'id' is a field, or prepend it if necessary.
-            # For simplicity, we assume 'id' will be correctly provided by config.
             pass
         self.fieldnames = fieldnames
         self._data_cache: List[Dict[str, Any]] = []
 
-        # Ensure the directory for the CSV file exists
         os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
 
         self._load_data()
@@ -53,7 +50,6 @@ class CsvStorage(StorageInterface):
         """
         if not os.path.exists(self.filepath) or os.path.getsize(self.filepath) == 0:
             self._data_cache = []
-            # Ensure file with headers is created if it was empty/non-existent
             if self.fieldnames:
                  with open(self.filepath, 'w', newline='') as csvfile:
                     writer = csv.DictWriter(csvfile, fieldnames=self.fieldnames)
@@ -63,11 +59,10 @@ class CsvStorage(StorageInterface):
         try:
             with open(self.filepath, mode='r', newline='', encoding='utf-8') as csvfile:
                 reader = csv.DictReader(csvfile)
-                # Basic check for fieldnames consistency (optional, DictReader adapts)
                 if reader.fieldnames and not all(f in reader.fieldnames for f in self.fieldnames):
                     print(f"Warning: Fieldnames in {self.filepath} differ from configured fieldnames.")
                 self._data_cache = [row for row in reader]
-        except FileNotFoundError: # Should be caught by os.path.exists, but as a safeguard
+        except FileNotFoundError:
             self._data_cache = []
         except Exception as e:
             print(f"Error loading data from {self.filepath}: {e}. Starting with an empty cache.")
@@ -107,15 +102,36 @@ class CsvStorage(StorageInterface):
         for field in self.fieldnames:
             if field == 'id':
                 continue
-            new_item_entry[field] = str(item_data.get(field, "")) # Ensure all values are strings for CSV
+            new_item_entry[field] = str(item_data.get(field, ""))
 
         self._data_cache.append(new_item_entry)
         self._save_data()
         return new_item_entry
 
-    async def read_all(self) -> List[Dict[str, Any]]:
-        """Retrieves all items from the data cache."""
-        return list(self._data_cache)
+    async def read_all(self, offset: int = 0, limit: int = 100) -> PaginatedDbResponse:
+        """
+        Retrieves items from the CSV data cache with pagination.
+        The cache reflects the content of the CSV file loaded at initialization.
+
+        Args:
+            offset: The number of items to skip from the start of the cache.
+            limit: The maximum number of items to return from the cache.
+
+        Returns:
+            A dictionary conforming to PaginatedDbResponse, detailing the
+            subset of items, total count in cache, and pagination parameters.
+        """
+        all_items_list = list(self._data_cache)
+        total_count = len(all_items_list)
+
+        paginated_items = all_items_list[offset : offset + limit]
+
+        return {
+            "items": paginated_items,
+            "total_count": total_count,
+            "offset": offset,
+            "limit": limit,
+        }
 
     async def read_one(self, item_id: str) -> Optional[Dict[str, Any]]:
         """Retrieves a single item by ID from the data cache."""
@@ -138,13 +154,10 @@ class CsvStorage(StorageInterface):
         if item_index != -1:
             original_item = self._data_cache[item_index]
 
-            # Create a new dict for the updated item, ensuring all fieldnames are present
-            # and values are stringified for CSV.
-            updated_item_entry: Dict[str, Any] = {'id': item_id} # Preserve original ID
+            updated_item_entry: Dict[str, Any] = {'id': item_id}
             for field in self.fieldnames:
                 if field == 'id':
                     continue
-                # Take new value from item_data if present, else keep original, default to empty string
                 updated_item_entry[field] = str(item_data.get(field, original_item.get(field, "")))
 
             self._data_cache[item_index] = updated_item_entry

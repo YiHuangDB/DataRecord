@@ -9,11 +9,12 @@ import uuid
 from typing import List, Optional, Dict, Any
 import os
 
-from sqlalchemy import create_engine, Column, String, JSON # Text was imported but not used.
+from sqlalchemy import create_engine, Column, String, JSON
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.exc import SQLAlchemyError
 
-from src.core.storage_interface import StorageInterface
+from src.core.storage_interface import StorageInterface, PaginatedDbResponse
 
 Base = declarative_base()
 
@@ -37,7 +38,7 @@ class ItemDB(Base):
 
 class DatabaseStorage(StorageInterface):
     """
-    Implements StorageInterface using SQLAlchemy for database interaction.
+    Implements StorageInterface using SQLAlchemy for database interaction (typically SQLite).
 
     Attributes:
         engine: The SQLAlchemy engine instance.
@@ -51,18 +52,17 @@ class DatabaseStorage(StorageInterface):
             db_url: The database connection URL (e.g., "sqlite:///./data/items.db").
         """
         db_dir = None
-        if "sqlite:///" in db_url: # Check if it's a file-based SQLite DB
-            # Extract directory path from db_url like "sqlite:///./data/items.db" or "sqlite:///data/items.db"
+        if "sqlite:///" in db_url:
             path_part = db_url.split("sqlite:///", 1)[1]
             if path_part.startswith("./"):
                 path_part = path_part[2:]
             db_dir = os.path.dirname(path_part)
 
-        if db_dir and not os.path.exists(db_dir): # Ensure directory exists if it's part of the path
+        if db_dir and not os.path.exists(db_dir):
              os.makedirs(db_dir, exist_ok=True)
 
         self.engine = create_engine(db_url)
-        Base.metadata.create_all(bind=self.engine) # Create tables if they don't exist
+        Base.metadata.create_all(bind=self.engine)
         self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
         print(f"DatabaseStorage initialized. DB URL: {db_url}")
 
@@ -76,14 +76,13 @@ class DatabaseStorage(StorageInterface):
         Creates a new item in the database.
         Generates a UUID for 'id' if not provided.
         """
-        # Ensure 'id' is present, or generate one.
         item_id = item_data.get('id', uuid.uuid4().hex)
 
         db_item = ItemDB(
-            id=item_id, # Use the determined item_id
-            name=item_data.get('name'), # Let model handle nullable for description/data
+            id=item_id,
+            name=item_data.get('name'),
             description=item_data.get('description'),
-            data=item_data.get('data', {}) # Default to empty dict for JSON field
+            data=item_data.get('data', {})
         )
         session: Session = self.SessionLocal()
         try:
@@ -91,15 +90,45 @@ class DatabaseStorage(StorageInterface):
             session.commit()
             session.refresh(db_item)
             return self._item_to_dict(db_item)
+        except SQLAlchemyError as e:
+            session.rollback()
+            raise RuntimeError(f"Error creating item in SQLite database: {e}")
         finally:
             session.close()
 
-    async def read_all(self) -> List[Dict[str, Any]]:
-        """Retrieves all items from the database."""
+    async def read_all(self, offset: int = 0, limit: int = 100) -> PaginatedDbResponse:
+        """
+        Retrieves items from the SQLite database with pagination using SQLAlchemy.
+
+        Args:
+            offset: The number of items to skip (SQL OFFSET).
+            limit: The maximum number of items to return (SQL LIMIT).
+
+        Returns:
+            A dictionary conforming to PaginatedDbResponse, containing the
+            paginated list of items, total count of all items in the table,
+            the offset used, and the limit used.
+
+        Raises:
+            RuntimeError: If a database error occurs during the read operation.
+        """
         session: Session = self.SessionLocal()
         try:
-            items_db = session.query(ItemDB).all()
-            return [self._item_to_dict(item) for item in items_db]
+            total_count = session.query(ItemDB).count()
+
+            items_db = session.query(ItemDB).offset(offset).limit(limit).all()
+
+            items_dict = [item.to_dict() for item in items_db]
+
+            return {
+                "items": items_dict,
+                "total_count": total_count,
+                "offset": offset,
+                "limit": limit,
+            }
+        except SQLAlchemyError as e:
+            print(f"Error reading items from SQLite database: {e}")
+            raise RuntimeError(f"Error reading items from SQLite database: {e}")
         finally:
             session.close()
 
@@ -111,6 +140,9 @@ class DatabaseStorage(StorageInterface):
             if item_db:
                 return self._item_to_dict(item_db)
             return None
+        except SQLAlchemyError as e:
+            session.rollback()
+            raise RuntimeError(f"Error reading item {item_id} from SQLite database: {e}")
         finally:
             session.close()
 
@@ -123,7 +155,6 @@ class DatabaseStorage(StorageInterface):
         try:
             db_item = session.query(ItemDB).filter(ItemDB.id == item_id).first()
             if db_item:
-                # Update fields from item_data, excluding 'id' as it's fixed by item_id
                 for key, value in item_data.items():
                     if key != 'id' and hasattr(db_item, key):
                         setattr(db_item, key, value)
@@ -132,6 +163,9 @@ class DatabaseStorage(StorageInterface):
                 session.refresh(db_item)
                 return self._item_to_dict(db_item)
             return None
+        except SQLAlchemyError as e:
+            session.rollback()
+            raise RuntimeError(f"Error updating item {item_id} in SQLite database: {e}")
         finally:
             session.close()
 
@@ -145,5 +179,8 @@ class DatabaseStorage(StorageInterface):
                 session.commit()
                 return True
             return False
+        except SQLAlchemyError as e:
+            session.rollback()
+            raise RuntimeError(f"Error deleting item {item_id} from SQLite database: {e}")
         finally:
             session.close()

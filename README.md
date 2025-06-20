@@ -2,7 +2,7 @@
 
 ## Description
 
-This project provides a simple yet flexible REST API for Create, Read, Update, and Delete (CRUD) operations. Its key feature is the ability to dynamically configure different storage backends (In-Memory, CSV file, SQLite database, Redis) without changing the core API logic. This is achieved through a configuration file and a storage adapter pattern.
+This project provides a simple yet flexible REST API for Create, Read, Update, and Delete (CRUD) operations. Its key feature is the ability to dynamically configure different storage backends (In-Memory, CSV file, SQLite database, Redis, MySQL) without changing the core API logic. This is achieved through a configuration file and a storage adapter pattern.
 
 The API is built using FastAPI, providing automatic interactive documentation (Swagger UI and ReDoc).
 
@@ -14,9 +14,10 @@ The API is built using FastAPI, providing automatic interactive documentation (S
     *   **CSV File:** Data is persisted in a CSV file.
     *   **SQLite Database:** Data is stored in a local SQLite database file.
     *   **Redis:** Data is stored in a Redis server.
+    *   **MySQL:** Data is stored in a MySQL server.
 *   Configuration via `config/config.ini` allows easy switching and setup of storage adapters.
-*   FastAPI framework: High performance, easy to use, and provides automatic API documentation.
-*   Asynchronous support for all storage operations.
+*   FastAPI framework: High performance, easy to use, and provides automatic API documentation including request/response models.
+*   Pagination for listing items.
 
 ## Project Structure
 
@@ -26,7 +27,7 @@ flexible-crud-api/
 │   └── config.ini      # Configuration file for storage adapter selection and settings
 ├── data/               # Default directory for CSV and SQLite files (content ignored by git)
 ├── src/
-│   ├── adapters/       # Concrete implementations of storage backends (Memory, CSV, DB, Redis)
+│   ├── adapters/       # Concrete implementations of storage backends (Memory, CSV, DB, Redis, MySQL)
 │   ├── api/            # FastAPI application logic, routes, and request/response models
 │   ├── core/           # Core components: Pydantic models, StorageInterface, configuration loader
 │   └── __init__.py
@@ -65,19 +66,37 @@ flexible-crud-api/
 
 1.  The primary configuration file is `config/config.ini`.
 2.  Edit `config/config.ini` to select and configure the desired storage backend:
-    *   Set `ADAPTER_TYPE` in the `[DEFAULT]` section to one of `memory`, `csv`, `database`, or `redis`.
-    *   **For `csv`:**
-        *   Configure `filepath` (e.g., `data/items_config.csv`) and `fieldnames` (e.g., `id,name,description,data`) in the `[csv]` section.
-    *   **For `database` (SQLite):**
-        *   Configure `db_url` (e.g., `sqlite:///./data/items_config.db`) in the `[database]` section.
-    *   **For `redis`:**
-        *   Configure `redis_url` (e.g., `redis://localhost:6379/0`) in the `[redis]` section. Ensure your Redis server is running and accessible at this URL.
-3.  The `data/` directory is automatically created if it doesn't exist when using `csv` or `database` adapters with default paths pointing to this directory. Ensure the application has write permissions if necessary.
+    *   Set `ADAPTER_TYPE` in the `[DEFAULT]` section to one of `memory`, `csv`, `database`, `redis`, or `mysql`.
+
+    #### In-Memory
+    *   No specific configuration needed beyond setting `ADAPTER_TYPE = memory`.
+
+    #### CSV File
+    *   Set `ADAPTER_TYPE = csv`.
+    *   Configure `filepath` (e.g., `data/items_config.csv`) and `fieldnames` (e.g., `id,name,description,data`) in the `[csv]` section.
+
+    #### SQLite Database
+    *   Set `ADAPTER_TYPE = database`.
+    *   Configure `db_url` (e.g., `sqlite:///./data/items_config.db`) in the `[database]` section.
+
+    #### Redis
+    *   Set `ADAPTER_TYPE = redis`.
+    *   Configure `redis_url` (e.g., `redis://localhost:6379/0`) in the `[redis]` section. Ensure your Redis server is running and accessible.
+
+    #### MySQL
+    *   Set `ADAPTER_TYPE = mysql`.
+    *   Configure the `[mysql]` section:
+        *   `db_url`: The SQLAlchemy connection string for MySQL. Format: `mysql+pymysql://USER:PASSWORD@HOST:PORT/DATABASE_NAME`.
+          Example: `db_url = mysql+pymysql://myuser:mypass@localhost:3306/mydb`
+    *   Ensure the specified database (`DATABASE_NAME`) already exists on your MySQL server. The application will create the necessary tables but not the database itself.
+    *   The `PyMySQL` driver is included in `requirements.txt`.
+
+3.  The `data/` directory is automatically created if it doesn't exist when using `csv` or `database` (SQLite) adapters with default paths pointing to this directory. Ensure the application has write permissions if necessary.
 
 ## Running the Application
 
 1.  Ensure your chosen storage backend is correctly configured in `config/config.ini`.
-2.  If using Redis, make sure your Redis server is running.
+2.  If using Redis or MySQL, make sure your respective server is running and accessible.
 3.  Run the FastAPI application:
     ```bash
     python main.py
@@ -92,19 +111,25 @@ flexible-crud-api/
     ```bash
     python run_tests.py
     ```
-2.  **Redis Tests:** The tests for `RedisStorage` (`tests/adapters/test_redis_storage.py`) require a running Redis instance.
-    *   By default, they attempt to connect to `redis://localhost:6379/9` (database 9).
-    *   You can specify a different Redis URL for tests by setting the `TEST_REDIS_URL` environment variable.
-    *   If the Redis server is not available or the specified database cannot be accessed, the Redis tests will be skipped automatically.
-    *   **Caution:** The Redis tests will run `FLUSHDB` on the specified test database. Do not point it to a Redis database containing important data.
+2.  **Service-Specific Tests:**
+    *   **Redis Tests:** The tests for `RedisStorage` (`tests/adapters/test_redis_storage.py`) require a running Redis instance.
+        *   By default, they attempt to connect to `redis://localhost:6379/9` (database 9).
+        *   You can specify a different Redis URL for tests by setting the `TEST_REDIS_URL` environment variable.
+        *   If the Redis server is not available or the specified database cannot be accessed, the Redis tests will be skipped automatically.
+        *   **Caution:** The Redis tests will run `FLUSHDB` on the specified test database. Do not point it to a Redis database containing important data.
+    *   **MySQL Tests:** For MySQL adapter tests (`tests/adapters/test_mysql_storage.py`), ensure a MySQL server is running and accessible. Set the `TEST_MYSQL_URL` environment variable to your MySQL test database connection string (e.g., `export TEST_MYSQL_URL="mysql+pymysql://user:pass@host:port/test_db"`). The tests will attempt to create and drop tables within this database. Tests will be skipped if this variable is not set or the database is unreachable.
 
 ## API Endpoints
 
 The API provides the following endpoints for managing items. Each item typically consists of an `id`, `name`, `description`, and a flexible `data` field (dictionary).
 
 *   `POST /items`: Create a new item.
-*   `GET /items`: Retrieve a list of all items.
-*   `GET /items/{item_id}`: Retrieve a specific item by its ID.
+*   `GET /items`: Retrieves a list of items. Supports pagination via `offset` and `limit` query parameters.
+    *   Query Parameters:
+        *   `offset` (integer, optional, default: 0): Number of items to skip.
+        *   `limit` (integer, optional, default: 10, max: 100): Maximum number of items to return.
+    *   Response: A JSON object containing `items` (list of item objects), `total_count` (total number of items available), `offset` (applied offset), and `limit` (applied limit).
+*   `GET /items/{item_id}`: Retrieve a specific item by its unique ID.
 *   `PUT /items/{item_id}`: Update an existing item by its ID.
 *   `DELETE /items/{item_id}`: Delete an item by its ID.
 
@@ -114,6 +139,6 @@ For detailed request/response schemas and to try out the API, please visit the i
 
 To add a new storage adapter:
 1.  Create a new class in `src/adapters/` that inherits from `src.core.storage_interface.StorageInterface`.
-2.  Implement all the abstract methods defined in `StorageInterface`.
+2.  Implement all the abstract methods defined in `StorageInterface`, including the paginated `read_all` method.
 3.  Add the new adapter type and its configuration options to `src/core/config.py` (in `get_storage_adapter`) and to `config/config.ini`.
 4.  (Recommended) Add unit tests for your new adapter in `tests/adapters/`.
