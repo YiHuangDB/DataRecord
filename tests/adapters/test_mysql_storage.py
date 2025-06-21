@@ -1,15 +1,21 @@
 import unittest
 import os
 import asyncio
-from sqlalchemy import create_engine #, text # Not using text directly here
-from sqlalchemy.orm import sessionmaker
-from src.adapters.mysql_storage import MySQLStorage, Base as MySQLBase
-from sqlalchemy.exc import OperationalError, SQLAlchemyError # For catching specific errors
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session as SQLAlchemySession # Import Session
+from src.adapters.mysql_storage import MySQLStorage, Base as MySQLBase, ItemDB as MySQLItemDB # Import ItemDB
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
+from src.core.query_models import FilterCondition, SortInstruction # Import query models
+from typing import List, Dict, Any, Optional # Ensure all are imported
+import unittest # Ensure unittest is imported at the top level
+import os # Ensure os is imported
+import asyncio # Ensure asyncio is imported
+
 
 class TestMySQLStorage(unittest.IsolatedAsyncioTestCase):
     db_url = os.getenv("TEST_MYSQL_URL")
     storage: MySQLStorage
-    engine = None # Class level engine for setup/teardown
+    engine = None
 
     @classmethod
     def setUpClass(cls):
@@ -66,6 +72,16 @@ class TestMySQLStorage(unittest.IsolatedAsyncioTestCase):
             self.skipTest(f"Failed to clear MySQL tables before test: {e}")
         finally:
             await asyncio.get_event_loop().run_in_executor(None, async_session.close)
+
+        # Common test data
+        self.test_items_data = [
+            {"id": "mysql-1", "name": "Apple", "description": "Crisp and red fruit", "data": {"color": "red", "category": "Fruit", "stock": 100}},
+            {"id": "mysql-2", "name": "Banana", "description": "Yellow and curved fruit", "data": {"color": "yellow", "category": "Fruit", "stock": 150}},
+            {"id": "mysql-3", "name": "Carrot", "description": "Orange and crunchy vegetable", "data": {"color": "orange", "category": "Vegetable", "stock": 80}},
+            {"id": "mysql-4", "name": "Dates", "description": "Brown and sweet fruit", "data": {"color": "brown", "category": "Fruit", "stock": 50}},
+            {"id": "mysql-5", "name": "Eggplant", "description": "Purple and smooth vegetable", "data": {"color": "purple", "category": "Vegetable", "stock": 70}},
+        ]
+        await self.storage.create_many(self.test_items_data)
 
 
     async def test_create_item(self):

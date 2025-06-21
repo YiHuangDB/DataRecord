@@ -9,10 +9,12 @@ import csv
 import os
 import uuid
 import shutil
-import json # Ensure json is imported for handling the 'data' field
+import json
 from typing import List, Optional, Dict, Any
 
 from src.core.storage_interface import StorageInterface, PaginatedDbResponse
+from src.core.query_models import FilterCondition, SortInstruction # Import query models
+from .in_memory_query_utils import _filter_items_in_memory, _sort_items_in_memory # Import helpers
 
 class CsvStorage(StorageInterface):
     """
@@ -22,6 +24,7 @@ class CsvStorage(StorageInterface):
         filepath (str): Path to the CSV file.
         fieldnames (List[str]): List of column headers for the CSV file.
         _data_cache (List[Dict[str, Any]]): In-memory cache of the CSV data.
+                                          'data' field is stored as dict here.
     """
     def __init__(self, filepath: str, fieldnames: List[str]):
         """
@@ -34,24 +37,20 @@ class CsvStorage(StorageInterface):
         """
         self.filepath = filepath
         if not fieldnames or 'id' not in fieldnames:
-            # This was a pass before, but it's good practice to ensure 'id' is critical.
-            # For now, assume config provides valid fieldnames including 'id'.
             if 'id' not in fieldnames:
-                 # Or raise an error if 'id' is strictly required by design
                 print("Warning: 'id' not in fieldnames for CsvStorage. This might lead to issues.")
         self.fieldnames = fieldnames
         self._data_cache: List[Dict[str, Any]] = []
 
         os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
 
-        self._load_data()
+        self._load_data() # Loads data and parses 'data' field to dict
         print(f"CsvStorage initialized. Data file: {self.filepath}")
 
     def _load_data(self) -> None:
         """
-        Loads data from the CSV file into the in-memory cache (`_data_cache`).
-        If the file doesn't exist or is empty, it initializes an empty cache
-        and ensures the file is created with headers on the first save.
+        Loads data from the CSV file into `_data_cache`.
+        'data' field (if JSON string) is parsed into a dictionary.
         """
         if not os.path.exists(self.filepath) or os.path.getsize(self.filepath) == 0:
             self._data_cache = []
@@ -67,15 +66,14 @@ class CsvStorage(StorageInterface):
                 if reader.fieldnames and not all(f in reader.fieldnames for f in self.fieldnames):
                     print(f"Warning: Fieldnames in {self.filepath} differ from configured fieldnames.")
 
-                # Deserialize 'data' field if it was stored as JSON string
                 temp_cache = []
                 for row in reader:
+                    # Ensure 'data' field is parsed from JSON string to dict
                     if 'data' in row and isinstance(row['data'], str):
                         try:
                             row['data'] = json.loads(row['data'])
                         except json.JSONDecodeError:
-                            # If 'data' is not a valid JSON string, keep it as is or log error
-                            print(f"Warning: Could not parse JSON string for 'data' field in row: {row['id']}")
+                            print(f"Warning: Could not parse JSON string for 'data' field in row ID: {row.get('id', 'N/A')}. Keeping as string.")
                     temp_cache.append(row)
                 self._data_cache = temp_cache
         except FileNotFoundError:
@@ -87,18 +85,19 @@ class CsvStorage(StorageInterface):
 
     def _save_data(self) -> None:
         """
-        Saves the current state of `_data_cache` to the CSV file.
-        Uses a temporary file for writing to prevent data corruption in case of errors,
-        then replaces the original file. Serializes 'data' field to JSON string if it's a dict.
+        Saves `_data_cache` to CSV. 'data' field (if dict) is serialized to JSON string.
         """
         temp_filepath = self.filepath + ".tmp"
         try:
-            # Prepare data for CSV: stringify 'data' field if it's a dict
             rows_to_write = []
             for item in self._data_cache:
                 row_copy = item.copy()
                 if 'data' in row_copy and isinstance(row_copy['data'], dict):
                     row_copy['data'] = json.dumps(row_copy['data'])
+                # Ensure all values are strings for CSV writer, except for what DictWriter handles
+                for key, value in row_copy.items():
+                    if not isinstance(value, (str, int, float, bool)) and value is not None : # Check if simple type
+                         row_copy[key] = str(value) # Fallback to string for complex types not handled (e.g. list if not data)
                 rows_to_write.append(row_copy)
 
             with open(temp_filepath, mode='w', newline='', encoding='utf-8') as csvfile:
@@ -117,66 +116,75 @@ class CsvStorage(StorageInterface):
 
     async def create(self, item_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Creates a new item, adds it to the cache, and saves to the CSV file.
-        Generates a UUID for 'id' if not provided. Ensures all fieldnames are present.
-        The 'data' field is stored as a JSON string in CSV if it's a dictionary.
+        Creates item, adds to cache (with 'data' as dict), saves to CSV (serializes 'data').
         """
         item_id = item_data.get('id', uuid.uuid4().hex)
 
         new_item_for_cache: Dict[str, Any] = {'id': item_id}
         for field in self.fieldnames:
-            if field == 'id':
-                continue
-            # For CSV, all values are typically stored as strings.
-            # 'data' field might be a dict, which should be JSON stringified before _save_data.
+            if field == 'id': continue
             if field == 'data' and field in item_data:
-                new_item_for_cache[field] = item_data[field] # Keep as dict in cache, _save_data handles stringification
+                new_item_for_cache[field] = item_data[field] # Keep as dict in cache
             else:
-                new_item_for_cache[field] = str(item_data.get(field, ""))
+                # For other fields, ensure they are string or simple types for CSV compatibility if not handled by _save_data stringification
+                new_item_for_cache[field] = item_data.get(field, "")
+
 
         self._data_cache.append(new_item_for_cache)
-        self._save_data() # _save_data will handle JSON stringification of 'data' field
+        self._save_data()
 
-        # Return item_data with ID, ensuring 'data' field is dict if it was input as dict
         return_item = item_data.copy()
         return_item['id'] = item_id
         return return_item
 
 
-    async def read_all(self, offset: int = 0, limit: int = 100) -> PaginatedDbResponse:
+    async def read_all(
+        self,
+        filters: Optional[List[FilterCondition]] = None,
+        sort_by: Optional[List[SortInstruction]] = None,
+        offset: int = 0,
+        limit: int = 100
+    ) -> PaginatedDbResponse:
         """
-        Retrieves items from the CSV data cache with pagination.
-        The cache reflects the content of the CSV file loaded at initialization.
-        The 'data' field is parsed from JSON string to dict if necessary during load.
+        Retrieves items from CSV cache with filtering, sorting, and pagination.
+        'data' field in items is expected to be a dictionary.
         """
-        all_items_list = list(self._data_cache)
-        total_count = len(all_items_list)
+        # self._load_data() # Typically not needed here as __init__ loads data.
+                         # If CSV can change externally during app lifecycle, this might be needed.
 
-        paginated_items = all_items_list[offset : offset + limit]
+        all_items_list = list(self._data_cache) # Operates on the in-memory cache
+
+        # Apply filtering
+        if filters:
+            processed_items = _filter_items_in_memory(all_items_list, filters)
+        else:
+            processed_items = all_items_list
+
+        # Apply sorting
+        if sort_by:
+            processed_items = _sort_items_in_memory(processed_items, sort_by)
+
+        total_count = len(processed_items) # Count after filtering
+
+        # Apply pagination
+        paginated_items = processed_items[offset : offset + limit]
 
         return {
-            "items": paginated_items, # Items in cache should have 'data' as dict
+            "items": paginated_items, # Items here have 'data' as dict
             "total_count": total_count,
             "offset": offset,
             "limit": limit,
         }
 
     async def read_one(self, item_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Retrieves a single item by ID from the data cache.
-        'data' field is returned as a dict.
-        """
-        for item in self._data_cache: # self._data_cache items have 'data' as dict
+        """Retrieves item by ID from cache. 'data' field is dict."""
+        for item in self._data_cache:
             if item.get('id') == item_id:
                 return item
         return None
 
     async def update(self, item_id: str, item_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """
-        Updates an item in the cache and saves to CSV.
-        Ensures 'id' is preserved. 'data' field is handled as dict in cache,
-        stringified to JSON on save.
-        """
+        """Updates item in cache (with 'data' as dict), saves to CSV (serializes 'data')."""
         item_index = -1
         for i, item_in_cache in enumerate(self._data_cache):
             if item_in_cache.get('id') == item_id:
@@ -184,25 +192,22 @@ class CsvStorage(StorageInterface):
                 break
 
         if item_index != -1:
-            # Update the item in the cache.
-            # The cache stores 'data' as dict. _save_data handles serialization.
             current_item = self._data_cache[item_index]
             for field_key, field_value in item_data.items():
-                if field_key == 'id': continue # Don't update ID via payload
-                current_item[field_key] = field_value # Update fields directly
+                if field_key == 'id': continue
+                current_item[field_key] = field_value
 
-            # Ensure all defined fieldnames are present, default if not from item_data
-            for fn_field in self.fieldnames:
+            for fn_field in self.fieldnames: # Ensure all expected fields are present
                 if fn_field not in current_item:
-                    current_item[fn_field] = "" # Default for missing fields
+                    current_item[fn_field] = ""
 
             self._data_cache[item_index] = current_item
-            self._save_data() # Persist changes
-            return current_item # Return the item as it is in cache (data as dict)
+            self._save_data()
+            return current_item
         return None
 
     async def delete(self, item_id: str) -> bool:
-        """Deletes an item from the cache and saves the change to CSV."""
+        """Deletes item from cache and saves change to CSV."""
         original_length = len(self._data_cache)
         self._data_cache = [item for item in self._data_cache if item.get('id') != item_id]
 
@@ -212,10 +217,7 @@ class CsvStorage(StorageInterface):
         return False
 
     async def create_many(self, items_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Creates multiple items in batch, adds them to cache, and saves to CSV once.
-        'data' field is handled as dict in cache, serialized to JSON string on save.
-        """
+        """Creates multiple items in cache (with 'data' as dict), saves to CSV once (serializes 'data')."""
         created_items_for_return = []
 
         for item_data_single in items_data:
@@ -223,29 +225,25 @@ class CsvStorage(StorageInterface):
 
             new_item_for_cache: Dict[str, Any] = {'id': item_id}
             for field in self.fieldnames:
-                if field == 'id':
-                    continue
+                if field == 'id': continue
                 if field == 'data' and field in item_data_single:
-                     # Store 'data' as dict in cache, _save_data handles stringification
-                    new_item_for_cache[field] = item_data_single[field]
+                    new_item_for_cache[field] = item_data_single[field] # Keep as dict in cache
                 else:
-                    new_item_for_cache[field] = str(item_data_single.get(field, ""))
+                    # For other fields, ensure they are string or simple types.
+                    # Using item_data_single.get(field, "") ensures that if a field defined in fieldnames
+                    # is not in item_data_single, it gets a default empty string.
+                    new_item_for_cache[field] = item_data_single.get(field, "")
+
 
             self._data_cache.append(new_item_for_cache)
 
-            # Prepare item for the return list (should match how items are read)
             item_to_return = item_data_single.copy()
             item_to_return['id'] = item_id
             created_items_for_return.append(item_to_return)
 
-        self._save_data() # Save all new items to CSV file once
+        self._save_data()
         return created_items_for_return
 
     async def export_all(self) -> List[Dict[str, Any]]:
-        """
-        Exports all items from the CSV data cache.
-        'data' field is returned as dict.
-        """
-        # self._load_data() might be needed if external changes are frequent and not reflected in cache.
-        # For this app, cache is source of truth after init.
-        return list(self._data_cache) # _data_cache items should have 'data' as dict due to _load_data logic
+        """Exports all items from cache. 'data' field is dict."""
+        return list(self._data_cache)

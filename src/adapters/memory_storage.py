@@ -8,6 +8,8 @@ Suitable for testing, development, or scenarios where persistence is not require
 import uuid
 from typing import Optional, List, Dict, Any
 from src.core.storage_interface import StorageInterface, PaginatedDbResponse
+from src.core.query_models import FilterCondition, SortInstruction # Import query models
+from .in_memory_query_utils import _filter_items_in_memory, _sort_items_in_memory # Import helpers
 
 class MemoryStorage(StorageInterface):
     """
@@ -29,23 +31,43 @@ class MemoryStorage(StorageInterface):
         self._data[item_id] = new_item_entry
         return new_item_entry
 
-    async def read_all(self, offset: int = 0, limit: int = 100) -> PaginatedDbResponse:
+    async def read_all(
+        self,
+        filters: Optional[List[FilterCondition]] = None,
+        sort_by: Optional[List[SortInstruction]] = None,
+        offset: int = 0,
+        limit: int = 100
+    ) -> PaginatedDbResponse:
         """
-        Retrieves items from the in-memory storage with pagination.
+        Retrieves items from the in-memory storage with optional filtering, sorting, and pagination.
 
         Args:
-            offset: The number of items to skip before starting to collect the result set.
+            filters: A list of FilterCondition dictionaries to apply.
+            sort_by: A list of SortInstruction dictionaries for ordering results.
+            offset: The number of items to skip.
             limit: The maximum number of items to return.
 
         Returns:
-            A dictionary conforming to PaginatedDbResponse, containing the
-            paginated list of items, total count of all items in storage,
-            the offset used, and the limit used.
+            A dictionary conforming to PaginatedDbResponse.
         """
+        # In Python 3.7+, dict values are ordered by insertion.
+        # If specific pre-sorting is needed before other operations, convert to list earlier.
         all_items_list = list(self._data.values())
-        total_count = len(all_items_list)
 
-        paginated_items = all_items_list[offset : offset + limit]
+        # Apply filtering
+        if filters:
+            processed_items = _filter_items_in_memory(all_items_list, filters)
+        else:
+            processed_items = all_items_list
+
+        # Apply sorting
+        if sort_by:
+            processed_items = _sort_items_in_memory(processed_items, sort_by)
+
+        total_count = len(processed_items) # Count after filtering
+
+        # Apply pagination
+        paginated_items = processed_items[offset : offset + limit]
 
         return {
             "items": paginated_items,
@@ -84,7 +106,7 @@ class MemoryStorage(StorageInterface):
         created_items = []
         for item_data in items_data:
             item_id = item_data.get('id', uuid.uuid4().hex)
-            new_item = item_data.copy() # Avoid modifying input dict directly
+            new_item = item_data.copy()
             new_item['id'] = item_id
 
             self._data[item_id] = new_item

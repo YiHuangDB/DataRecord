@@ -93,6 +93,15 @@ flexible-crud-api/
 
 3.  The `data/` directory is automatically created if it doesn't exist when using `csv` or `database` (SQLite) adapters with default paths pointing to this directory. Ensure the application has write permissions if necessary.
 
+### Database Schema and Initialization
+
+The application uses SQLAlchemy to manage database interactions for SQL-based backends (SQLite and MySQL).
+
+- **Table Creation**: When a SQLite or MySQL adapter is initialized, the necessary tables (`items` or `items_mysql` respectively) are automatically created if they do not already exist in the configured database. For MySQL, the database itself must be created beforehand.
+- **Schema Details**: For detailed information on the table structures, column types, and indexes, please refer to the [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md) file.
+
+Currently, the project does not use advanced schema migration tools like Alembic.
+
 ## Running the Application
 
 1.  Ensure your chosen storage backend is correctly configured in `config/config.ini`.
@@ -129,6 +138,34 @@ The API provides the following endpoints for managing items. Each item typically
         *   `offset` (integer, optional, default: 0): Number of items to skip.
         *   `limit` (integer, optional, default: 10, max: 100): Maximum number of items to return.
     *   Response: A JSON object containing `items` (list of item objects), `total_count` (total number of items available), `offset` (applied offset), and `limit` (applied limit).
+          - **Query Parameters for Filtering**:
+            Filters are applied by appending `__operator` to a field name, or using the field name directly for equality. Multiple filters are ANDed together.
+            - `fieldName=value`: Exact match (e.g., `name=Apple`). This is equivalent to `fieldName__eq=value`.
+            - `fieldName__operator=value`: Apply a specific operator.
+              - Supported Operators:
+                - `eq`: Equals (e.g., `name__eq=Apple`)
+                - `ne`: Not equals (e.g., `name__ne=Banana`)
+                - `gt`: Greater than (e.g., `data.value__gt=100` - *Note: Filtering on nested fields within `data` JSON object like `data.value` is not directly supported by all backends or the basic query parser. Use on top-level fields like `name`, `description`, or `id`.* For example, if `id` were numeric: `id__gt=5`).
+                - `gte`: Greater than or equal to.
+                - `lt`: Less than.
+                - `lte`: Less than or equal to.
+                - `contains`: Substring match (case-insensitive for strings, e.g., `description__contains=fruit`).
+                - `startswith`: Prefix match (case-insensitive for strings, e.g., `name__startswith=App`).
+                - `in`: Value is one of a list (e.g., `name__in=Apple,Banana,Carrot` or `status__in=active,pending`). Values are comma-separated.
+            - Example: `GET /items?name__contains=app&description__startswith=A&limit=5`
+          - **Query Parameters for Sorting**:
+            - `sort_by`: A single string specifying one or more sort criteria.
+              - `sort_by=fieldName`: Sorts by `fieldName` in ascending order.
+              - `sort_by=-fieldName`: Sorts by `fieldName` in descending order (prefix with a hyphen).
+              - `sort_by=field1,-field2`: Sorts by `field1` (ascending), then by `field2` (descending). Comma-separated.
+            - Example: `GET /items?sort_by=-name,id` (Sort by name descending, then by ID ascending).
+          - **Query Parameters for Pagination (already listed but reiterated here for completeness within this structure)**:
+            - `offset` (integer, optional, default: 0): Number of items to skip.
+            - `limit` (integer, optional, default: 10, max: 100): Maximum number of items to return.
+          - **Response (already listed but reiterated)**: A JSON object containing `items` (list of item objects), `total_count` (total number of items matching filters), `offset` (applied offset), and `limit` (applied limit).
+          - **Limitations**:
+            - Filtering on nested fields within the `data` JSON object (e.g., `data.price__gt=10`) is not supported by the basic query parser and may not work consistently across all storage backends without specific adapter enhancements. Filters should primarily target top-level fields (`id`, `name`, `description`).
+            - Complex OR conditions between different fields (e.g., `name=A OR description=B`) are not supported via query parameters in this version. The `in` operator provides OR logic for a single field.
 *   `GET /items/{item_id}`: Retrieve a specific item by its unique ID.
 *   `PUT /items/{item_id}`: Update an existing item by its ID.
 *   `DELETE /items/{item_id}`: Delete an item by its ID.

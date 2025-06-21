@@ -9,6 +9,8 @@ Items are represented as dictionaries.
 from abc import ABC, abstractmethod
 from typing import TypedDict, List, Dict, Any, Optional
 
+from .query_models import FilterCondition, SortInstruction # Import new query models
+
 # Definition for the paginated response structure
 class PaginatedDbResponse(TypedDict):
     items: List[Dict[str, Any]]
@@ -39,20 +41,29 @@ class StorageInterface(ABC):
         pass
 
     @abstractmethod
-    async def read_all(self, offset: int = 0, limit: int = 100) -> PaginatedDbResponse:
+    async def read_all(
+        self,
+        filters: Optional[List[FilterCondition]] = None,
+        sort_by: Optional[List[SortInstruction]] = None,
+        offset: int = 0,
+        limit: int = 100
+    ) -> PaginatedDbResponse:
         """
-        Retrieves items from the storage with pagination.
+        Retrieves items from the storage with optional filtering, sorting, and pagination.
 
         Args:
+            filters: An optional list of FilterCondition dictionaries to apply.
+                     Multiple conditions are typically ANDed by the implementing adapter.
+                     Support for specific operators may vary by adapter.
+            sort_by: An optional list of SortInstruction dictionaries for ordering results.
+                     Sorting is applied in the order provided.
             offset: The number of items to skip before starting to collect the result set.
             limit: The maximum number of items to return.
 
         Returns:
             A dictionary conforming to PaginatedDbResponse, containing the list of
-            items for the current page, total count of items in storage,
+            items for the current page, total count of items matching the filters,
             the offset used, and the limit used.
-            Returns an empty list of items if no items are found for the given page,
-            but total_count should still reflect the overall count in storage.
         """
         pass
 
@@ -129,7 +140,8 @@ class StorageInterface(ABC):
 
         Warning: This method can be resource-intensive for large datasets.
         It's intended for scenarios like data backup or full data transfers
-        where pagination is not suitable.
+        where pagination is not suitable. This method typically does not apply
+        filters or sorting that might be available in `read_all`.
 
         Returns:
             A list of dictionaries, where each dictionary represents an item.

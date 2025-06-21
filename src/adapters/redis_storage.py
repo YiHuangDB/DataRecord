@@ -10,8 +10,11 @@ import json
 from typing import List, Optional, Dict, Any
 
 import redis
-from redis.exceptions import RedisError # Import RedisError
+from redis.exceptions import RedisError
 from src.core.storage_interface import StorageInterface, PaginatedDbResponse
+from src.core.query_models import FilterCondition, SortInstruction # Import query models
+from .in_memory_query_utils import _filter_items_in_memory, _sort_items_in_memory # Import helpers
+
 
 class RedisStorage(StorageInterface):
     """
@@ -37,7 +40,7 @@ class RedisStorage(StorageInterface):
         try:
             self.redis_client = redis.from_url(redis_url)
             self.redis_client.ping()
-        except redis.exceptions.ConnectionError as e: # More specific than just RedisError for connection
+        except redis.exceptions.ConnectionError as e:
             raise ConnectionError(f"Failed to connect to Redis at {redis_url}: {e}")
 
         self.key_prefix = "item:"
@@ -75,44 +78,61 @@ class RedisStorage(StorageInterface):
         self.redis_client.set(redis_key, serialized_data)
         return item_data_with_id
 
-    async def read_all(self, offset: int = 0, limit: int = 100) -> PaginatedDbResponse:
+    async def read_all(
+        self,
+        filters: Optional[List[FilterCondition]] = None,
+        sort_by: Optional[List[SortInstruction]] = None,
+        offset: int = 0,
+        limit: int = 100
+    ) -> PaginatedDbResponse:
         """
-        Retrieves items from Redis with pagination.
-        Note: This implementation uses `KEYS` which can be inefficient for large datasets.
-        Client-side sorting is applied for pagination consistency.
+        Retrieves items from Redis. Filtering and sorting are applied in-memory
+        after fetching all matching keys. Pagination is then applied.
+        WARNING: `KEYS` can be slow. For large datasets, consider Redisearch or other indexing.
 
         Args:
+            filters: An optional list of FilterCondition dictionaries.
+            sort_by: An optional list of SortInstruction dictionaries.
             offset: The number of items to skip.
             limit: The maximum number of items to return.
 
         Returns:
-            A dictionary conforming to PaginatedDbResponse, containing the
-            paginated list of items, total count of matching items,
-            the offset used, and the limit used.
+            A dictionary conforming to PaginatedDbResponse.
 
         Raises:
-            RuntimeError: If a Redis error occurs or an unexpected error happens.
+            RuntimeError: If a Redis error or other unexpected error occurs.
         """
         try:
             item_keys_bytes = self.redis_client.keys(self.key_prefix + "*")
-            item_keys = sorted([key.decode('utf-8') for key in item_keys_bytes])
 
-            total_count = len(item_keys)
+            all_fetched_items: List[Dict[str, Any]] = []
+            if item_keys_bytes:
+                # item_keys = [key.decode('utf-8') for key in item_keys_bytes] # Not strictly needed for mget
+                items_data_str = self.redis_client.mget(item_keys_bytes) # mget can take list of bytes
 
-            if total_count == 0:
-                return {"items": [], "total_count": 0, "offset": offset, "limit": limit}
+                for item_str in items_data_str:
+                    if item_str is not None:
+                        deserialized = self._deserialize(item_str)
+                        if deserialized is not None:
+                            all_fetched_items.append(deserialized)
 
-            paginated_keys_to_fetch = item_keys[offset : offset + limit]
+            # Apply in-memory filtering
+            if filters:
+                processed_items = _filter_items_in_memory(all_fetched_items, filters)
+            else:
+                processed_items = all_fetched_items
 
-            items_list: List[Dict[str, Any]] = []
-            if paginated_keys_to_fetch:
-                items_data_str = self.redis_client.mget(paginated_keys_to_fetch)
+            # Apply in-memory sorting
+            if sort_by:
+                processed_items = _sort_items_in_memory(processed_items, sort_by)
 
-                deserialized_items = [self._deserialize(item_str) for item_str in items_data_str if item_str is not None]
-                items_list = [item for item in deserialized_items if item is not None]
+            total_count = len(processed_items) # Count after filtering (and potentially sorting)
+
+            # Apply pagination
+            paginated_items = processed_items[offset : offset + limit]
 
             return {
-                "items": items_list,
+                "items": paginated_items,
                 "total_count": total_count,
                 "offset": offset,
                 "limit": limit,
@@ -175,10 +195,8 @@ class RedisStorage(StorageInterface):
             pipe.execute()
             return created_items
         except RedisError as e:
-            # Log the error, e.g., print(f"RedisError during create_many: {e}")
             raise RuntimeError(f"Error bulk creating items in Redis: {e}")
         except Exception as e:
-            # Log the error, e.g., print(f"Unexpected error during create_many: {e}")
             raise RuntimeError(f"An unexpected error occurred during Redis create_many: {e}")
 
     async def export_all(self) -> List[Dict[str, Any]]:
@@ -192,9 +210,7 @@ class RedisStorage(StorageInterface):
             if not item_keys_bytes:
                 return []
 
-            # item_keys = [key.decode('utf-8') for key in item_keys_bytes] # Not needed if mget takes bytes
-
-            items_data_str = self.redis_client.mget(item_keys_bytes) # mget can take list of bytes
+            items_data_str = self.redis_client.mget(item_keys_bytes)
 
             exported_items: List[Dict[str, Any]] = []
             for item_str in items_data_str:
@@ -205,8 +221,6 @@ class RedisStorage(StorageInterface):
 
             return exported_items
         except RedisError as e:
-            # Log the error, e.g., print(f"RedisError during export_all: {e}")
             raise RuntimeError(f"Error exporting all items from Redis: {e}")
         except Exception as e:
-            # Log the error, e.g., print(f"Unexpected error during export_all: {e}")
             raise RuntimeError(f"An unexpected error occurred during Redis export_all: {e}")

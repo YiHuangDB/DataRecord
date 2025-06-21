@@ -9,12 +9,13 @@ import uuid
 from typing import List, Optional, Dict, Any
 import os
 
-from sqlalchemy import create_engine, Column, String, JSON
+from sqlalchemy import create_engine, Column, String, JSON, asc, desc # Added asc, desc
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.exc import SQLAlchemyError
 
 from src.core.storage_interface import StorageInterface, PaginatedDbResponse
+from src.core.query_models import FilterCondition, SortInstruction # Added imports
 
 Base = declarative_base()
 
@@ -23,7 +24,7 @@ class ItemDB(Base):
     __tablename__ = "items"
 
     id = Column(String, primary_key=True, index=True, doc="Unique identifier for the item (UUID string)")
-    name = Column(String, nullable=False, doc="Name of the item")
+    name = Column(String, nullable=False, index=True, doc="Name of the item") # Added index for potential sorting/filtering
     description = Column(String, nullable=True, doc="Optional description of the item")
     data = Column(JSON, doc="Flexible JSON field for arbitrary data associated with the item")
 
@@ -78,7 +79,6 @@ class DatabaseStorage(StorageInterface):
         """
         item_id = item_data.get('id', uuid.uuid4().hex)
 
-        # Filter item_data for valid ItemDB columns before passing to constructor
         valid_data_for_model = {k: v for k, v in item_data.items() if hasattr(ItemDB, k) and k != 'id'}
         db_item = ItemDB(id=item_id, **valid_data_for_model)
 
@@ -94,28 +94,84 @@ class DatabaseStorage(StorageInterface):
         finally:
             session.close()
 
-    async def read_all(self, offset: int = 0, limit: int = 100) -> PaginatedDbResponse:
+    async def read_all(
+        self,
+        filters: Optional[List[FilterCondition]] = None,
+        sort_by: Optional[List[SortInstruction]] = None,
+        offset: int = 0,
+        limit: int = 100
+    ) -> PaginatedDbResponse:
         """
-        Retrieves items from the SQLite database with pagination using SQLAlchemy.
+        Retrieves items from the SQLite database with filtering, sorting, and pagination using SQLAlchemy.
 
         Args:
+            filters: An optional list of FilterCondition dictionaries to apply.
+            sort_by: An optional list of SortInstruction dictionaries for ordering results.
             offset: The number of items to skip (SQL OFFSET).
             limit: The maximum number of items to return (SQL LIMIT).
 
         Returns:
-            A dictionary conforming to PaginatedDbResponse, containing the
-            paginated list of items, total count of all items in the table,
-            the offset used, and the limit used.
+            A dictionary conforming to PaginatedDbResponse.
 
         Raises:
-            RuntimeError: If a database error occurs during the read operation.
+            RuntimeError: If a database error occurs.
         """
         session: Session = self.SessionLocal()
         try:
-            total_count = session.query(ItemDB).count()
+            items_query = session.query(ItemDB)
+            count_query = session.query(ItemDB) # For total_count, apply filters but not sort/pagination
 
-            items_db = session.query(ItemDB).offset(offset).limit(limit).all()
+            if filters:
+                for condition in filters:
+                    field_name = condition["field"]
+                    operator = condition["operator"]
+                    value = condition["value"]
 
+                    column = getattr(ItemDB, field_name, None)
+                    if not column:
+                        print(f"Warning: Field '{field_name}' not found in ItemDB for filtering, skipping.")
+                        continue
+
+                    # Apply filter to both queries
+                    filter_expression = None
+                    if operator == "eq": filter_expression = (column == value)
+                    elif operator == "ne": filter_expression = (column != value)
+                    elif operator == "gt": filter_expression = (column > value)
+                    elif operator == "gte": filter_expression = (column >= value)
+                    elif operator == "lt": filter_expression = (column < value)
+                    elif operator == "lte": filter_expression = (column <= value)
+                    elif operator == "contains": filter_expression = column.contains(value, autoescape=True)
+                    elif operator == "startswith": filter_expression = column.startswith(value, autoescape=True)
+                    elif operator == "in":
+                        val_list = value if isinstance(value, list) else [p.strip() for p in str(value).split(',') if p.strip()]
+                        if not val_list: continue
+                        filter_expression = column.in_(val_list)
+                    else:
+                        print(f"Warning: Unknown operator '{operator}' for field '{field_name}', skipping.")
+                        continue
+
+                    if filter_expression is not None:
+                        items_query = items_query.filter(filter_expression)
+                        count_query = count_query.filter(filter_expression)
+
+            total_count = count_query.count()
+
+            if sort_by:
+                for instruction in sort_by:
+                    field_name = instruction["field"]
+                    direction = instruction["direction"]
+                    column = getattr(ItemDB, field_name, None)
+                    if not column:
+                        print(f"Warning: Field '{field_name}' not found in ItemDB for sorting, skipping.")
+                        continue
+
+                    if direction == "asc":
+                        items_query = items_query.order_by(asc(column))
+                    elif direction == "desc":
+                        items_query = items_query.order_by(desc(column))
+
+            items_query = items_query.offset(offset).limit(limit)
+            items_db = items_query.all()
             items_dict = [item.to_dict() for item in items_db]
 
             return {
@@ -139,7 +195,6 @@ class DatabaseStorage(StorageInterface):
                 return self._item_to_dict(item_db)
             return None
         except SQLAlchemyError as e:
-            # session.rollback() # Not strictly necessary for read, but good practice if complex query
             raise RuntimeError(f"Error reading item {item_id} from SQLite database: {e}")
         finally:
             session.close()
@@ -196,9 +251,6 @@ class DatabaseStorage(StorageInterface):
             db_instance = ItemDB(id=item_id, **valid_data_for_model)
             item_db_instances.append(db_instance)
 
-            # Store a representation for return; after commit, IDs are set.
-            # This assumes IDs are client-generated or pre-generated UUIDs.
-            # If IDs were auto-increment by DB, refresh would be needed for each instance.
             return_item_data = item_data_single.copy()
             return_item_data['id'] = item_id
             created_items_with_ids.append(return_item_data)
@@ -209,8 +261,6 @@ class DatabaseStorage(StorageInterface):
         try:
             session.add_all(item_db_instances)
             session.commit()
-            # No need to refresh instances if IDs are not generated by the DB (e.g., auto-increment)
-            # and no other DB-side defaults need to be read back immediately.
             return created_items_with_ids
         except SQLAlchemyError as e:
             session.rollback()
