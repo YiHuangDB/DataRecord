@@ -1,290 +1,63 @@
 # Flexible CRUD REST API
 
-## Description
+This project provides a flexible REST API for Create, Read, Update, and Delete (CRUD) operations, designed with an adaptable backend architecture. It supports various storage solutions like in-memory, CSV, SQLite, MySQL, and Redis.
 
-This project provides a simple yet flexible REST API for Create, Read, Update, and Delete (CRUD) operations. Its key feature is the ability to dynamically configure different storage backends (In-Memory, CSV file, SQLite database, Redis, MySQL) without changing the core API logic. This is achieved through a configuration file and a storage adapter pattern.
+**For comprehensive documentation, please see the `docs/` directory, starting with [`docs/index.md`](docs/index.md).**
 
-The API is built using FastAPI, providing automatic interactive documentation (Swagger UI and ReDoc).
+## Overview
 
-## Features
+The API allows for managing generic "item" resources and features:
+*   Standard CRUD operations.
+*   Advanced querying with filtering and sorting.
+*   Batch creation and data export.
+*   Configurable storage backends.
+*   Automatic interactive API documentation (Swagger UI & ReDoc).
 
-*   Standard CRUD operations for items.
-*   Multiple backend support:
-    *   **In-Memory:** Data is stored in memory and lost when the application stops.
-    *   **CSV File:** Data is persisted in a CSV file.
-    *   **SQLite Database:** Data is stored in a local SQLite database file.
-    *   **Redis:** Data is stored in a Redis server.
-    *   **MySQL:** Data is stored in a MySQL server.
-*   Configuration via `config/config.ini` allows easy switching and setup of storage adapters.
-*   FastAPI framework: High performance, easy to use, and provides automatic API documentation including request/response models.
-*   Pagination for listing items.
+## Quick Start
 
-## Project Structure
-
-```
-flexible-crud-api/
-├── config/
-│   └── config.ini      # Configuration file for storage adapter selection and settings
-├── data/               # Default directory for CSV and SQLite files (content ignored by git)
-├── src/
-│   ├── adapters/       # Concrete implementations of storage backends (Memory, CSV, DB, Redis, MySQL)
-│   ├── api/            # FastAPI application logic, routes, and request/response models
-│   ├── core/           # Core components: Pydantic models, StorageInterface, configuration loader
-│   └── __init__.py
-├── tests/              # Unit and integration tests
-│   ├── adapters/       # Tests for each storage adapter
-│   ├── api/            # Tests for the API endpoints
-│   └── __init__.py
-├── .gitignore          # Specifies intentionally untracked files that Git should ignore
-├── main.py             # Main application entry point to run the FastAPI server
-├── requirements.txt    # Python dependencies for the project
-├── run_tests.py        # Script to discover and execute unit tests
-└── README.md           # This file
-```
-
-## Setup and Installation
-
-1.  **Clone the repository:**
+1.  **Clone & Setup**:
     ```bash
-    git clone <repository_url>
-    cd flexible-crud-api
+    git clone your_repository_url_placeholder # Replace with actual URL
+    cd your_project_directory_placeholder
+    ./run_dev_tasks.sh setup
     ```
-
-2.  **Create and activate a virtual environment (recommended):**
+    (See [`docs/getting_started.md`](docs/getting_started.md) for detailed setup).
+2.  **Configure**: Edit `config/config.ini` to select and configure your desired storage adapter (e.g., `memory`, `csv`, `database`, `mysql`, `redis`).
+    (See [`docs/configuration.md`](docs/configuration.md) for details).
+3.  **Run**:
     ```bash
-    python -m venv venv
+    # Ensure virtual environment from 'setup' is active
+    python3 main.py
     ```
-    *   On macOS/Linux: `source venv/bin/activate`
-    *   On Windows: `venv\Scripts\activate`
+    API will be at `http://localhost:8000`. Interactive docs at `http://localhost:8000/docs`.
 
-3.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+## Documentation
 
-## Configuration
+**Full, detailed documentation can be found in the [`docs/`](docs/) directory.**
 
-1.  The primary configuration file is `config/config.ini`.
-2.  Edit `config/config.ini` to select and configure the desired storage backend:
-    *   Set `ADAPTER_TYPE` in the `[DEFAULT]` section to one of `memory`, `csv`, `database`, `redis`, or `mysql`.
+Key sections include:
+*   [`docs/index.md`](docs/index.md): Introduction and navigation.
+*   [`docs/getting_started.md`](docs/getting_started.md): Setup, configuration, running the app and tests.
+*   [`docs/api_reference.md`](docs/api_reference.md): Detailed information on all API endpoints.
+*   [`docs/query_language.md`](docs/query_language.md): Guide to advanced filtering and sorting.
+*   [`docs/storage_adapters.md`](docs/storage_adapters.md): Details on each storage backend.
+*   [`docs/configuration.md`](docs/configuration.md): In-depth guide to `config.ini`.
+*   [`docs/DATABASE_SCHEMA.md`](docs/DATABASE_SCHEMA.md): SQL database schema.
+*   [`docs/development_guide.md`](docs/development_guide.md): Information for developers and contributors.
 
-    #### In-Memory
-    *   No specific configuration needed beyond setting `ADAPTER_TYPE = memory`.
+## Development
 
-    #### CSV File
-    *   Set `ADAPTER_TYPE = csv`.
-    *   Configure `filepath` (e.g., `data/items_config.csv`) and `fieldnames` (e.g., `id,name,description,data`) in the `[csv]` section.
+The `run_dev_tasks.sh` script helps with common development tasks:
+*   `./run_dev_tasks.sh format`: Format code with Black.
+*   `./run_dev_tasks.sh lint`: Lint with Flake8.
+*   `./run_dev_tasks.sh test`: Run all unit tests.
+*   `./run_dev_tasks.sh all`: Run format, lint, and test.
+(See [`docs/development_guide.md`](docs/development_guide.md) for more details).
 
-    #### SQLite Database
-    *   Set `ADAPTER_TYPE = database`.
-    *   Configure `db_url` (e.g., `sqlite:///./data/items_config.db`) in the `[database]` section.
+## Contributing
 
-    #### Redis
-    *   Set `ADAPTER_TYPE = redis`.
-    *   Configure `redis_url` (e.g., `redis://localhost:6379/0`) in the `[redis]` section. Ensure your Redis server is running and accessible.
+Contributions are welcome! Please refer to the [`docs/development_guide.md`](docs/development_guide.md) for coding conventions and guidelines.
 
-    #### MySQL
-    *   Set `ADAPTER_TYPE = mysql`.
-    *   Configure the `[mysql]` section:
-        *   `db_url`: The SQLAlchemy connection string for MySQL. Format: `mysql+pymysql://USER:PASSWORD@HOST:PORT/DATABASE_NAME`.
-          Example: `db_url = mysql+pymysql://myuser:mypass@localhost:3306/mydb`
-    *   Ensure the specified database (`DATABASE_NAME`) already exists on your MySQL server. The application will create the necessary tables but not the database itself.
-    *   The `PyMySQL` driver is included in `requirements.txt`.
+## License
 
-3.  The `data/` directory is automatically created if it doesn't exist when using `csv` or `database` (SQLite) adapters with default paths pointing to this directory. Ensure the application has write permissions if necessary.
-
-### Database Schema and Initialization
-
-The application uses SQLAlchemy to manage database interactions for SQL-based backends (SQLite and MySQL).
-
-- **Table Creation**: When a SQLite or MySQL adapter is initialized, the necessary tables (`items` or `items_mysql` respectively) are automatically created if they do not already exist in the configured database. For MySQL, the database itself must be created beforehand.
-- **Schema Details**: For detailed information on the table structures, column types, and indexes, please refer to the [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md) file.
-
-Currently, the project does not use advanced schema migration tools like Alembic.
-
-## Running the Application
-
-1.  Ensure your chosen storage backend is correctly configured in `config/config.ini`.
-2.  If using Redis or MySQL, make sure your respective server is running and accessible.
-3.  Run the FastAPI application:
-    ```bash
-    python main.py
-    ```
-4.  The API will be available at `http://localhost:8000`.
-    *   Interactive API documentation (Swagger UI): `http://localhost:8000/docs`
-    *   Alternative API documentation (ReDoc): `http://localhost:8000/redoc`
-
-## Running Tests
-
-1.  To run all unit tests:
-    ```bash
-    python run_tests.py
-    ```
-2.  **Service-Specific Tests:**
-    *   **Redis Tests:** The tests for `RedisStorage` (`tests/adapters/test_redis_storage.py`) require a running Redis instance.
-        *   By default, they attempt to connect to `redis://localhost:6379/9` (database 9).
-        *   You can specify a different Redis URL for tests by setting the `TEST_REDIS_URL` environment variable.
-        *   If the Redis server is not available or the specified database cannot be accessed, the Redis tests will be skipped automatically.
-        *   **Caution:** The Redis tests will run `FLUSHDB` on the specified test database. Do not point it to a Redis database containing important data.
-    *   **MySQL Tests:** For MySQL adapter tests (`tests/adapters/test_mysql_storage.py`), ensure a MySQL server is running and accessible. Set the `TEST_MYSQL_URL` environment variable to your MySQL test database connection string (e.g., `export TEST_MYSQL_URL="mysql+pymysql://user:pass@host:port/test_db"`). The tests will attempt to create and drop tables within this database. Tests will be skipped if this variable is not set or the database is unreachable.
-
-## API Endpoints
-
-The API provides the following endpoints for managing items. Each item typically consists of an `id`, `name`, `description`, and a flexible `data` field (dictionary).
-
-*   `POST /items`: Create a new item.
-*   `GET /items`: Retrieves a list of items. Supports pagination via `offset` and `limit` query parameters.
-    *   Query Parameters:
-        *   `offset` (integer, optional, default: 0): Number of items to skip.
-        *   `limit` (integer, optional, default: 10, max: 100): Maximum number of items to return.
-    *   Response: A JSON object containing `items` (list of item objects), `total_count` (total number of items available), `offset` (applied offset), and `limit` (applied limit).
-          - **Query Parameters for Filtering**:
-            Filters are applied by appending `__operator` to a field name, or using the field name directly for equality. Multiple filters are ANDed together.
-            - `fieldName=value`: Exact match (e.g., `name=Apple`). This is equivalent to `fieldName__eq=value`.
-            - `fieldName__operator=value`: Apply a specific operator.
-              - Supported Operators:
-                - `eq`: Equals (e.g., `name__eq=Apple`)
-                - `ne`: Not equals (e.g., `name__ne=Banana`)
-                - `gt`: Greater than (e.g., `data.value__gt=100` - *Note: Filtering on nested fields within `data` JSON object like `data.value` is not directly supported by all backends or the basic query parser. Use on top-level fields like `name`, `description`, or `id`.* For example, if `id` were numeric: `id__gt=5`).
-                - `gte`: Greater than or equal to.
-                - `lt`: Less than.
-                - `lte`: Less than or equal to.
-                - `contains`: Substring match (case-insensitive for strings, e.g., `description__contains=fruit`).
-                - `startswith`: Prefix match (case-insensitive for strings, e.g., `name__startswith=App`).
-                - `in`: Value is one of a list (e.g., `name__in=Apple,Banana,Carrot` or `status__in=active,pending`). Values are comma-separated.
-            - Example: `GET /items?name__contains=app&description__startswith=A&limit=5`
-          - **Query Parameters for Sorting**:
-            - `sort_by`: A single string specifying one or more sort criteria.
-              - `sort_by=fieldName`: Sorts by `fieldName` in ascending order.
-              - `sort_by=-fieldName`: Sorts by `fieldName` in descending order (prefix with a hyphen).
-              - `sort_by=field1,-field2`: Sorts by `field1` (ascending), then by `field2` (descending). Comma-separated.
-            - Example: `GET /items?sort_by=-name,id` (Sort by name descending, then by ID ascending).
-          - **Query Parameters for Pagination (already listed but reiterated here for completeness within this structure)**:
-            - `offset` (integer, optional, default: 0): Number of items to skip.
-            - `limit` (integer, optional, default: 10, max: 100): Maximum number of items to return.
-          - **Response (already listed but reiterated)**: A JSON object containing `items` (list of item objects), `total_count` (total number of items matching filters), `offset` (applied offset), and `limit` (applied limit).
-          - **Limitations**:
-            - Filtering on nested fields within the `data` JSON object (e.g., `data.price__gt=10`) is not supported by the basic query parser and may not work consistently across all storage backends without specific adapter enhancements. Filters should primarily target top-level fields (`id`, `name`, `description`).
-            - Complex OR conditions between different fields (e.g., `name=A OR description=B`) are not supported via query parameters in this version. The `in` operator provides OR logic for a single field.
-*   `GET /items/{item_id}`: Retrieve a specific item by its unique ID.
-*   `PUT /items/{item_id}`: Update an existing item by its ID.
-*   `DELETE /items/{item_id}`: Delete an item by its ID.
-
-For detailed request/response schemas and to try out the API, please visit the interactive documentation at `http://localhost:8000/docs`.
-
-### Batch Operations
-
-- `POST /items/batch`: Creates multiple items in a single request.
-  - **Request Body**: A JSON array of item objects. Each object should match the structure for creating a single item (e.g., `name`, `description`, `data`). The `id` field is optional; if not provided, it will be generated by the server.
-    ```json
-    [
-      {
-        "name": "Batch Item 1",
-        "description": "Description for batch item 1",
-        "data": {"key1": "value1"}
-      },
-      {
-        "name": "Batch Item 2",
-        "data": {"key2": "value2"}
-      }
-    ]
-    ```
-  - **Response Body**: A JSON array of the created item objects, each including its server-assigned `id`.
-    ```json
-    [
-      {
-        "id": "generated-id-1",
-        "name": "Batch Item 1",
-        "description": "Description for batch item 1",
-        "data": {"key1": "value1"}
-      },
-      {
-        "id": "generated-id-2",
-        "name": "Batch Item 2",
-        "data": {"key2": "value2"}
-      }
-    ]
-    ```
-
-- `GET /items/export`: Exports all items currently in the storage.
-  - **Request Body**: None.
-  - **Response Body**: A JSON array of all item objects.
-    ```json
-    [
-      {
-        "id": "some-id-1",
-        "name": "First Item",
-        "description": "Details about first item",
-        "data": {}
-      },
-      {
-        "id": "some-id-2",
-        "name": "Second Item",
-        "description": "Details about second item",
-        "data": {}
-      }
-      // ... all other items
-    ]
-    ```
-
-## Extending
-
-To add a new storage adapter:
-1.  Create a new class in `src/adapters/` that inherits from `src.core.storage_interface.StorageInterface`.
-2.  Implement all the abstract methods defined in `StorageInterface`, including the paginated `read_all` method.
-3.  Add the new adapter type and its configuration options to `src/core/config.py` (in `get_storage_adapter`) and to `config/config.ini`.
-4.  (Recommended) Add unit tests for your new adapter in `tests/adapters/`.
-
-## Development Workflow & Utility Script
-
-A utility script `run_dev_tasks.sh` is provided in the project root to help with common development tasks such as setting up the environment, linting, formatting, and running tests.
-
-**Prerequisites:**
-- Ensure you have Bash (common on Linux and macOS; Windows users can use WSL or Git Bash).
-- Ensure the script is executable: `chmod +x run_dev_tasks.sh` (this should be set in the repository).
-
-**Key Development Dependencies:**
-The project uses the following tools for code quality, listed in `requirements-dev.txt`:
-- `flake8`: For linting Python code to check for style and errors.
-- `black`: For opinionated, consistent code formatting.
-
-**Using the Script:**
-You can run the script with different commands:
-
-```bash
-./run_dev_tasks.sh [command]
-```
-
-Available commands:
-
-- `setup`:
-  - Creates a Python virtual environment in a directory named `venv` if it doesn't already exist.
-  - Activates the virtual environment.
-  - Installs/updates dependencies from `requirements.txt` and `requirements-dev.txt`.
-  It's recommended to run this first.
-
-- `lint`:
-  - Activates the virtual environment.
-  - Runs `flake8` on the `src/` and `tests/` directories to check for code style issues and potential errors.
-
-- `format`:
-  - Activates the virtual environment.
-  - Runs `black` to automatically format Python code in `src/` and `tests/` directories.
-
-- `test`:
-  - Activates the virtual environment.
-  - Runs all unit tests using `python run_tests.py`.
-
-- `all` (default if no command is given):
-  - Performs `setup`, then `lint`, then `format`, and finally `test`. This is useful as a pre-commit check or for CI.
-
-- `help` or `-h` or `--help`:
-  - Displays the help message with all available commands.
-
-**Suggested Workflow:**
-1.  Run `./run_dev_tasks.sh setup` initially to set up your environment.
-2.  Before committing changes, consider running:
-    - `./run_dev_tasks.sh format` to ensure code is formatted.
-    - `./run_dev_tasks.sh lint` to check for linting errors.
-    - `./run_dev_tasks.sh test` to ensure all tests pass.
-3.  Alternatively, just run `./run_dev_tasks.sh all` to perform all checks and tests.
+This project is licensed under the MIT License. See the `LICENSE` file for details (if a LICENSE file exists).
