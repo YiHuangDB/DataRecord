@@ -234,3 +234,57 @@ To add a new storage adapter:
 2.  Implement all the abstract methods defined in `StorageInterface`, including the paginated `read_all` method.
 3.  Add the new adapter type and its configuration options to `src/core/config.py` (in `get_storage_adapter`) and to `config/config.ini`.
 4.  (Recommended) Add unit tests for your new adapter in `tests/adapters/`.
+
+## Development Workflow & Utility Script
+
+A utility script `run_dev_tasks.sh` is provided in the project root to help with common development tasks such as setting up the environment, linting, formatting, and running tests.
+
+**Prerequisites:**
+- Ensure you have Bash (common on Linux and macOS; Windows users can use WSL or Git Bash).
+- Ensure the script is executable: `chmod +x run_dev_tasks.sh` (this should be set in the repository).
+
+**Key Development Dependencies:**
+The project uses the following tools for code quality, listed in `requirements-dev.txt`:
+- `flake8`: For linting Python code to check for style and errors.
+- `black`: For opinionated, consistent code formatting.
+
+**Using the Script:**
+You can run the script with different commands:
+
+```bash
+./run_dev_tasks.sh [command]
+```
+
+Available commands:
+
+- `setup`:
+  - Creates a Python virtual environment in a directory named `venv` if it doesn't already exist.
+  - Activates the virtual environment.
+  - Installs/updates dependencies from `requirements.txt` and `requirements-dev.txt`.
+  It's recommended to run this first.
+
+- `lint`:
+  - Activates the virtual environment.
+  - Runs `flake8` on the `src/` and `tests/` directories to check for code style issues and potential errors.
+
+- `format`:
+  - Activates the virtual environment.
+  - Runs `black` to automatically format Python code in `src/` and `tests/` directories.
+
+- `test`:
+  - Activates the virtual environment.
+  - Runs all unit tests using `python run_tests.py`.
+
+- `all` (default if no command is given):
+  - Performs `setup`, then `lint`, then `format`, and finally `test`. This is useful as a pre-commit check or for CI.
+
+- `help` or `-h` or `--help`:
+  - Displays the help message with all available commands.
+
+**Suggested Workflow:**
+1.  Run `./run_dev_tasks.sh setup` initially to set up your environment.
+2.  Before committing changes, consider running:
+    - `./run_dev_tasks.sh format` to ensure code is formatted.
+    - `./run_dev_tasks.sh lint` to check for linting errors.
+    - `./run_dev_tasks.sh test` to ensure all tests pass.
+3.  Alternatively, just run `./run_dev_tasks.sh all` to perform all checks and tests.

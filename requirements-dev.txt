@@ -1,0 +1,3 @@
+flake8>=3.8.0 # For linting Python code
+black>=22.3.0 # For consistent Python code formatting
+# Add other dev tools like isort, pytest if desired later
